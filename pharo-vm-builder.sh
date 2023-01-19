@@ -54,8 +54,7 @@ report() {
 
 	[ -d "$build_dir" ] || { oops "Couldn't build Pharo VM"; }
 	{
-		printf '\n'
-		printf "Built: %s\n" $build_dir > $report_file 
+		printf "Built in : %s\n" $build_dir
 		printf '== are we in docker =============================================\n'
 		num=$(cat /proc/1/cgroup | grep docker | wc -l);
 		if [ $num -ge 1 ]; then
