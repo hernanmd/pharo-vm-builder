@@ -24,7 +24,12 @@ cmd_exists () {
 }
 
 print_err(){
-    echo "E: $*" >>/dev/stderr
+	if [ -w /dev/stderr ]; then
+        std_err=/dev/stderr
+	else
+        std_err=/dev/tty
+	fi
+    echo "E: $*" >> $std_err
 }
 
 show_usage() {
