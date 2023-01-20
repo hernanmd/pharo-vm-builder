@@ -32,16 +32,20 @@ print_err(){
     echo "E: $*" >> $std_err
 }
 
-show_usage() {
-	printf "Usage: %s\n" $(basename $0) 
-
-}
-
 # Build Pharo in a new timestamed directory
 build_vm () {
 	[ -d "$pharo_vm_dir" ] || { oops "pharo-vm git repository directory not found";}
 	mkdir -v "$build_dir" || { oops "Cannot create timestamped directory"; }
-	cmake -S "$pharo_vm_dir" -B "$build_dir"
+	graph_viz_dot="$build_dir".dot
+	cp CMakeGraphVizOptions.cmake pharo-vm	
+	## generate compiler commands file (compile_commands.json) to help clangd find include paths in vscode 
+	# https://clang.llvm.org/docs/JSONCompilationDatabase.html
+	cmake \
+		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+		-S "$pharo_vm_dir" \
+		-B "$build_dir" \
+		--graphviz=$graph_viz_dot
+	cmd_exists dot && dot -Tpng -o "$build_dir".png $graph_viz_dot
 	(cd "$build_dir" && make install)
 }
 
@@ -56,11 +60,10 @@ report() {
 	{
 		printf "Built in : %s\n" $build_dir
 		printf '== are we in docker =============================================\n'
-		num=$(cat /proc/1/cgroup | grep docker | wc -l);
-		if [ $num -ge 1 ]; then
-			echo "Yes"
+		if curl -s --unix-socket /var/run/docker.sock http/_ping 2>&1 >/dev/null; then
+			printf "Running\n"
 		else
-			echo "No"
+			printf "Not running\n"
 		fi
 
 		printf '\n'
@@ -133,7 +136,6 @@ report() {
 			printf DYLD_LIBRARY_PATH ${DYLD_LIBRARY_PATH} ;
 		fi
 
-		printf
 		printf '\n'
 		printf "== tree =========================================================\n"
 		cmd_exists tree && tree -f -C --gitignore $build_dir
