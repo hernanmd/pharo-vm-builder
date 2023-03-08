@@ -7,151 +7,81 @@ set -o errexit    # Used to exit upon error, avoiding cascading errors
 set -o pipefail   # Unveils hidden failures
 set -o nounset    # Exposes unset variables
 
+source "${BASH_SOURCE%/*}"/libexec/report.sh
+source "${BASH_SOURCE%/*}"/libexec/utils.sh
+
 builds_root_dir="builds"
 build_dir_prefix="$builds_root_dir"/"build-"
 dirname=$(date +%Y-%m-%d-%S)
 build_dir=$build_dir_prefix$dirname
 pharo_vm_dir="pharo-vm"
-oops() {
-	echo "$0:" "$@" >&2
-	exit 1
+graph_viz_dot="$build_dir".dot
+
+configure_graphviz () {
+	cp CMakeGraphVizOptions.cmake pharo-vm	
 }
 
-# Returns 0 if command was found in the current system, 1 otherwise
-cmd_exists () {
-	type "$1" &> /dev/null || [ -f "$1" ];
-	return $?
-}
-
-print_err(){
-	if [ -w /dev/stderr ]; then
-        std_err=/dev/stderr
-	else
-        std_err=/dev/tty
-	fi
-    echo "E: $*" >> $std_err
-}
-
-# Build Pharo in a new timestamed directory
-build_vm () {
+# Configure to build Pharo in a new timestamed directory
+configure_build_dir () {
+	[ -d "$builds_root_dir" ] || { print_err "Creating builds root directory\n"; mkdir -v "$builds_root_dir"; }
 	[ -d "$pharo_vm_dir" ] || { oops "pharo-vm git repository directory not found";}
 	mkdir -v "$build_dir" || { oops "Cannot create timestamped directory"; }
-	graph_viz_dot="$build_dir".dot
-	cp CMakeGraphVizOptions.cmake pharo-vm	
-	## generate compiler commands file (compile_commands.json) to help clangd find include paths in vscode 
-	# https://clang.llvm.org/docs/JSONCompilationDatabase.html
+}
+
+# Generate configuration and build with GraphViz support
+## generate compiler commands file (compile_commands.json) to help clangd find include paths in vscode 
+## https://clang.llvm.org/docs/JSONCompilationDatabase.html
+build_vm_graphviz () {
+	flavour="$1"
+	configure_build_dir
+	configure_graphviz
 	cmake \
 		-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 		-S "$pharo_vm_dir" \
 		-B "$build_dir" \
+		-DFLAVOUR="$flavour" \
 		--graphviz=$graph_viz_dot
 	cmd_exists dot && dot -Tpng -o "$build_dir".png $graph_viz_dot
 	(cd "$build_dir" && make install)
 }
 
-setup() {
-	[ -d "$builds_root_dir" ] || { print_err "Creating builds root directory\n"; mkdir -v "$builds_root_dir"; }
+# Generate configuration and build
+build_vm () {
+	flavour="$1"
+	configure_build_dir
+	cmake \
+		-S "$pharo_vm_dir" \
+		-B "$build_dir" \
+		-DDEPENDENCIES_FORCE_BUILD=ON \
+		-DFLAVOUR="$flavour"
+	(cd "$build_dir" && make install)
 }
 
-report() {
-	local report_file=$build_dir/"build-report-"$dirname".txt"
-
-	[ -d "$build_dir" ] || { oops "Couldn't build Pharo VM"; }
-	{
-		printf "Built in : %s\n" $build_dir
-		printf '== are we in docker =============================================\n'
-		if curl -s --unix-socket /var/run/docker.sock http/_ping 2>&1 >/dev/null; then
-			printf "Running\n"
-		else
-			printf "Not running\n"
-		fi
-
-		printf '\n'
-		printf '== lsb_release =====================================================\n'
-		cmd_exists lsb_release && lsb_release -a 2>&1
-
-		printf '\n'
-		printf '== uname =====================================================\n'
-		uname -a 2>&1
-
-		printf '\n'
-		printf '== bash =====================================================\n'
-		bash --version 2>&1
-
-		printf '\n'
-		printf '== zsh =====================================================\n'
-		cmd_exists zsh && zsh --version 2>&1
-
-		printf '\n'
-		printf '== ulimit =====================================================\n'
-		cmd_exists ulimit && ulimit -a 2>&1
-
-		printf '\n'
-		printf '== git =====================================================\n'
-		cmd_exists git && git --version 2>&1
-
-		printf '\n'
-		printf '== wget =====================================================\n'
-		cmd_exists wget && wget --version 2>&1
-
-		printf '\n'
-		printf '== curl =====================================================\n'
-		cmd_exists curl && curl --version 2>&1
-
-		printf '\n'
-		printf '== openssl =====================================================\n'
-		cmd_exists openssl && openssl version 2>&1    
-
-		printf '\n'
-		printf '==  apt-get =====================================================\n'
-		cmd_exists apt-get && apt-get -v 2>&1  
-
-		printf '\n'
-		printf '== lsblk =====================================================\n'
-		cmd_exists lsblk && lsblk 2>&1  
-
-		printf '\n'
-		printf '== lscpu =====================================================\n'
-		cmd_exists lscpu && lscpu 2>&1
-
-		printf '\n'
-		printf "== dmidecode (system) ==========================================\n"
-		cmd_exists dmidecode && sudo dmidecode -t system 2>&1
-
-		printf '\n'
-		printf "== dmidecode (processor) ========================================\n"
-		cmd_exists dmidecode && sudo dmidecode -t processor 2>&1
-
-		printf '\n'
-		printf '== LD_LIBRARY_PATH/DYLD_LIBRARY_PATH =============================\n'
-		if [ -z ${LD_LIBRARY_PATH+x} ]; then
-			printf "LD_LIBRARY_PATH is unset\n";
-		else
-			printf LD_LIBRARY_PATH ${LD_LIBRARY_PATH} ;
-		fi
-
-		if [ -z ${DYLD_LIBRARY_PATH+x} ]; then
-			printf "DYLD_LIBRARY_PATH is unset\n";
-		else
-			printf DYLD_LIBRARY_PATH ${DYLD_LIBRARY_PATH} ;
-		fi
-
-		printf '\n'
-		printf "== tree =========================================================\n"
-		cmd_exists tree && tree -f -C --gitignore $build_dir
-
-		} >> ${report_file}
-
-		printf "Wrote environment to ${report_file}. You can review the contents of that file.\n"
-		printf "and use it to populate the fields in the github issue template.\n"
-		printf '\n'
-		printf "cat ${report_file}\n"
-		printf '\n'
+parse_cmd_line () {
+	case "$1" in
+		clean )
+			trash builds
+			;;	
+		druid )
+			build_vm DruidVM
+			;;
+		cogit )
+			build_vm CoInterpreter
+			;;
+		stack )
+			build_vm StackVM
+			;;
+		version )
+			print_version
+			;;
+		* )
+			print_help
+			exit 1
+	esac
 }
 
 main() {
-	setup
-	build_vm
+	parse_cmd_line ${@}
 	report
 }
 
