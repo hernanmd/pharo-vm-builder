@@ -16,7 +16,6 @@ git clone https://github.com/pharo-project/pharo-vm.git
 Currently it generates:
 
 - A timestamped build directory for each usage.
-- A GraphViz with the Pharo VM dependency graph.
 - A compiler commands file (compile_commands.json) to help clangd find include paths in vscode.
 - A timestamped report file with lots of build information, for example:
   - if we are in docker
